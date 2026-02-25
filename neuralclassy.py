@@ -186,3 +186,15 @@ plt.grid(True, alpha=0.3)
 plt.tight_layout()
 plt.savefig("volatility_plot.png", bbox_inches="tight")
 plt.show()
+
+
+# Center day of the test-set plot
+center_date = dates_test[int(len(dates_test) / 2)]
+print("Center of plot:", center_date)
+center_values = df.loc[center_date, ["Close", "High", "Volume", "label_next_week"]]
+
+print("\nValues for center day:")
+print("Close:", center_values["Close"])
+print("High:", center_values["High"])
+print("Volume:", center_values["Volume"])
+print("Regime:", int(center_values["label_next_week"]))
