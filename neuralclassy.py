@@ -1,7 +1,3 @@
-
-# ============================================================
-# 1. IMPORTS
-# ============================================================
 import yfinance as yf
 import pandas as pd
 import numpy as np
@@ -12,11 +8,8 @@ import matplotlib.pyplot as plt
 from sklearn.preprocessing import StandardScaler
 
 
-# ============================================================
-# 2. DOWNLOAD FUTURES DATA
-# ============================================================
 ticker = "ZC=F"
-df = yf.download(ticker, start="2020-01-01", end="2024-01-01")
+df = yf.download(ticker, start="2020-01-01", end="2026-02-01")
 df.dropna(inplace=True)
 
 # FIX 1: Flatten MultiIndex columns
@@ -28,9 +21,7 @@ if isinstance(df["Volume"], pd.DataFrame):
 df["Volume"] = df["Volume"].astype(float)
 
 
-# ============================================================
-# 3. FEATURE ENGINEERING
-# ============================================================
+# 3. Feature Engineering
 df["return"] = df["Close"].pct_change()
 df["volatility"] = df["return"].rolling(10).std()
 df["spread_proxy"] = (df["High"] - df["Low"]) / df["Close"]
@@ -39,41 +30,34 @@ df["depth_proxy"] = df["Volume"].rolling(5).mean()
 # Raw Amihud
 df["amihud_raw"] = (df["return"].abs()) / (df["Close"] * df["Volume"])
 
-# SMOOTHED AMIHUD (5-day rolling mean)
+# Smoothed Amihud (5-day rolling mean)
 df["amihud"] = df["amihud_raw"].rolling(5).mean()
 
 
-# ============================================================
-# 4. CLEAN BEFORE LABELING
-# ============================================================
+# 4. Clean before labeling
+
 df = df.replace([np.inf, -np.inf], np.nan)
 df = df.dropna()
 
 
-# ============================================================
-# 5. CREATE 3 LIQUIDITY REGIMES USING SMOOTHED AMIHUD
-# ============================================================
+# 5. Create 3 liquidity regimes with smoothed regimes
+
 df["label"] = pd.qcut(df["amihud"], q=3, labels=[0, 1, 2]).astype(int)
 
 
-# ============================================================
 # 6. SHIFT LABELS FOR 7-DAY FORECASTING
-# ============================================================
 df["label_next_week"] = df["label"].shift(-7)
 
 
-# ============================================================
 # 7. FINAL CLEANING (AFTER SHIFTING)
-# ============================================================
 features = ["spread_proxy", "Volume", "volatility", "depth_proxy", "amihud"]
 
 df = df.replace([np.inf, -np.inf], np.nan)
 df = df.dropna(subset=features + ["label_next_week"])
 
+print(df.head())
 
-# ============================================================
-# 8. PREPARE FEATURES + TARGET
-# ============================================================
+# 8. Prepare features + target
 X = df[features].values
 y = df["label_next_week"].values
 
@@ -84,9 +68,7 @@ X_tensor = torch.tensor(X_scaled, dtype=torch.float32)
 y_tensor = torch.tensor(y, dtype=torch.long)
 
 
-# ============================================================
-# 9. TRAIN/TEST SPLIT (CHRONOLOGICAL)
-# ============================================================
+# 9. train test split
 split_idx = int(len(df) * 0.8)
 
 X_train = X_tensor[:split_idx]
@@ -98,9 +80,7 @@ dates_test = df.index[split_idx:]
 prices_test = df["Close"].iloc[split_idx:]
 
 
-# ============================================================
-# 10. MODEL
-# ============================================================
+# Model
 class LiquidityClassifier(nn.Module):
     def __init__(self, input_dim):
         super().__init__()
@@ -123,9 +103,7 @@ criterion = nn.CrossEntropyLoss()
 optimizer = optim.Adam(model.parameters(), lr=0.001)
 
 
-# ============================================================
-# 11. TRAINING LOOP
-# ============================================================
+# training loop
 epochs = 50
 for epoch in range(epochs):
     model.train()
@@ -141,9 +119,6 @@ for epoch in range(epochs):
         print(f"Epoch {epoch}, Loss: {loss.item():.4f}")
 
 
-# ============================================================
-# 12. EVALUATION
-# ============================================================
 model.eval()
 with torch.no_grad():
     test_outputs = model(X_test)
@@ -153,10 +128,29 @@ with torch.no_grad():
 print(f"\n7-Day Ahead Forecast Accuracy: {accuracy:.2%}")
 
 
-# ============================================================
-# 13. PLOT RESULTS (THICK GREEN/RED REGIME BARS)
-# ============================================================
 pred_np = predictions.numpy()
+
+
+# Center day of the test-set plot
+center_date = dates_test[int(len(dates_test) / 2)]
+print("Center of plot:", center_date)
+center_values = df.loc[center_date, ["Close", "High", "Volume", "label_next_week"]]
+
+print("\nValues for center day:")
+print("Close:", center_values["Close"])
+print("High:", center_values["High"])
+print("Volume:", center_values["Volume"])
+for date, pred in zip(dates_test, pred_np):
+    if(pred==0):
+        regime='High Liquidity'
+    elif(pred==1):
+        regime='Moderate Liquidity'
+    elif(pred==2):
+        regime='Low Liquidity'
+    else:
+        regime='error or somethin idk what happened'
+
+print("Regime:", regime)
 
 plt.figure(figsize=(16, 8))
 plt.plot(dates_test, prices_test, color="black", linewidth=3)
@@ -167,12 +161,13 @@ for date, pred in zip(dates_test, pred_np):
         plt.axvspan(date, date + pd.Timedelta(days=1), color="green", alpha=0.25)
     elif pred == 2:
         plt.axvspan(date, date + pd.Timedelta(days=1), color="red", alpha=0.25)
-
+plt.axvspan(center_date, center_date + pd.Timedelta(days=1), color='blue', alpha=0.25)
 plt.title("7-Day Ahead Liquidity Forecast (Smoothed Amihud Regimes)")
 plt.xlabel("Date")
 plt.ylabel("Price")
 plt.grid(True, alpha=0.3)
 plt.tight_layout()
+plt.savefig("liquidity_plot.png", bbox_inches="tight")
 plt.show()
 
 
@@ -186,15 +181,3 @@ plt.grid(True, alpha=0.3)
 plt.tight_layout()
 plt.savefig("volatility_plot.png", bbox_inches="tight")
 plt.show()
-
-
-# Center day of the test-set plot
-center_date = dates_test[int(len(dates_test) / 2)]
-print("Center of plot:", center_date)
-center_values = df.loc[center_date, ["Close", "High", "Volume", "label_next_week"]]
-
-print("\nValues for center day:")
-print("Close:", center_values["Close"])
-print("High:", center_values["High"])
-print("Volume:", center_values["Volume"])
-print("Regime:", int(center_values["label_next_week"]))
