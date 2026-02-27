@@ -14,7 +14,7 @@ if isinstance(df.columns, pd.MultiIndex):
     df.columns = df.columns.get_level_values(0)
 
 df.dropna(inplace=True)
-plot_df = df.tail(45)
+plot_df = df.tail("365D")
 
 mpf.plot(plot_df, 
          type='candle',         
