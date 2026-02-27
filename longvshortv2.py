@@ -3,7 +3,7 @@ import pandas as pd
 import numpy as np
 import mplfinance as mpf
 
-
+# --- 1. SETUP & DATA ---
 ticker = "ZC=F"
 df = yf.download(ticker, start="2024-01-01", end="2026-02-24", auto_adjust=True)
 
@@ -36,4 +36,4 @@ mpf.plot(plot_df,
          datetime_format='%b %d',
          xrotation=45,
          tight_layout=True,
-         axisoff=False)        
+         axisoff=False)        # Keeps the price axis numbers (helpful for scaling)
