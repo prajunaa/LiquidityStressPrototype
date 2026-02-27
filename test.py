@@ -8,10 +8,10 @@ import torch.nn.functional as F
 from sklearn.preprocessing import StandardScaler
 import matplotlib.pyplot as plt
 
-
+# --- CONFIGURATION ---
 ticker = "ZC=F"
 start_date = "2023-01-01"
-end_date = "2026-02-24"  
+end_date = "2026-02-24"  # Updated to current 2026 data
 H = 3 
 EPOCHS = 50
 LR = 0.001
@@ -96,7 +96,6 @@ for epoch in range(EPOCHS):
     optimizer.step()
     if epoch % 10 == 0:
         print(f"Epoch {epoch:02d} | Loss: {loss.item():.4f}")
-
 
 model.eval()
 with torch.no_grad():
