@@ -17,7 +17,7 @@ price_range = df['High'] - df['Low']
 df['buy_ratio'] = np.where(price_range > 0, (df['Close'] - df['Low']) / price_range, 0.5)
 df['vol_long'] = df['Volume'] * df['buy_ratio']
 df['vol_short'] = df['Volume'] * (1 - df['buy_ratio'])
-plot_df = df.tail("365D")
+plot_df = df.tail(45)
 
 
 ap = [
