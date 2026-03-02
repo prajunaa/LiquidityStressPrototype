@@ -12,18 +12,22 @@ f_ticker, n_ticker = "ZCK26.CBT", "ZCN26.CBT" # May vs July 2026
 main_ticker = "ZC=F"
 
 print(f"Analyzing {f_ticker} -> {n_ticker} transition velocity...")
-df_f = yf.download(f_ticker, period="1y", multi_level_index=False).dropna()
-df_n = yf.download(n_ticker, period="1y", multi_level_index=False).dropna()
-df_main = yf.download(main_ticker, period="5y", multi_level_index=False).dropna()
+# Use auto_adjust=True and handle potential multi-index issues common in 2024-2025 yfinance updates
+df_f = yf.download(f_ticker, period="1y", auto_adjust=True).dropna()
+df_n = yf.download(n_ticker, period="1y", auto_adjust=True).dropna()
+df_main = yf.download(main_ticker, period="5y", auto_adjust=True).dropna()
+
+# Standardize columns if yfinance returns multi-index (Ticker level)
+for d in [df_f, df_n, df_main]:
+    if isinstance(d.columns, pd.MultiIndex):
+        d.columns = d.columns.get_level_values(0)
 
 # 2. FILTER FOR ACTIVE ROLL PERIOD ONLY
 roll_df = pd.DataFrame({'F_Vol': df_f['Volume'], 'N_Vol': df_n['Volume']}).dropna()
-# Zoom in: Start when Next contract has at least 2% of the combined volume
 roll_df['N_Share'] = (roll_df['N_Vol'] / (roll_df['F_Vol'] + roll_df['N_Vol'])) * 100
 roll_df = roll_df[roll_df['N_Share'] > 2] 
 
 # 3. CALCULATE ROLL VELOCITY & PROJECT TARGET DATE
-# Velocity = Average daily change in % Share over the last 5 sessions
 roll_df['Velocity'] = roll_df['N_Share'].diff().rolling(5).mean()
 current_velocity = roll_df['Velocity'].iloc[-1]
 current_share = roll_df['N_Share'].iloc[-1]
@@ -35,11 +39,12 @@ if current_velocity > 0:
 else:
     date_str = "Stalled / Insufficient Data"
 
-# 4. FEATURE ENGINEERING & MODEL (With Regularization)
+# 4. FEATURE ENGINEERING & MODEL
 def prepare_features(df_in):
     df = df_in.copy()
     df["return"] = df["Close"].pct_change()
     df["vol"] = df["return"].rolling(10).std()
+    # Amihud Illiquidity proxy
     df["amihud"] = (df["return"].abs() / (df["Close"] * df["Volume"] / 1_000_000)).rolling(5).mean()
     df["rvol"] = df["Volume"] / df["Volume"].rolling(10).mean()
     return df.dropna()
@@ -77,27 +82,30 @@ with torch.no_grad():
 # 6. DASHBOARD VISUALS
 fig, (ax1, ax2) = plt.subplots(2, 1, figsize=(12, 10), sharex=True)
 
-# Graph 1: Zoomed Roll Progress & Target Date Marker
-ax1.plot(roll_df.index, roll_df['N_Share'], color='red', linewidth=3, label='Next Contract Share %')
+roll_df_plot = roll_df.tail(30)
+ax1.plot(roll_df_plot.index, roll_df_plot['N_Share'], color='red', linewidth=3, label='Next Contract Share %')
 ax1.axhline(50, color='black', linestyle='--', alpha=0.5, label='Crossover Target (50%)')
 ax1.set_title(f"ROLL PROGRESS: {f_ticker} -> {n_ticker}", fontweight='bold')
 ax1.set_ylabel("% Liquidity Shifted")
 ax1.legend()
 
-# Graph 2: Roll Velocity (Acceleration of the shift)
-ax2.fill_between(roll_df.index, roll_df['Velocity'], color='blue', alpha=0.3)
-ax2.plot(roll_df.index, roll_df['Velocity'], color='blue', label='Velocity (%/Day)')
+ax2.fill_between(roll_df_plot.index, roll_df_plot['Velocity'], color='blue', alpha=0.3)
+ax2.plot(roll_df_plot.index, roll_df_plot['Velocity'], color='blue', label='Velocity (%/Day)')
 ax2.axhline(0, color='black', alpha=0.5)
 ax2.set_title("VOLUME SHIFT VELOCITY (Speed of the Transition)", fontweight='bold')
 ax2.legend()
 
-# DYNAMIC OVERLAY PANEL
+# FIX: Increased padding at bottom (rect=[0, 0.08, 1, 0.93]) so text isn't cut off
 plt.figtext(0.5, 0.94, f"ESTIMATED ROLL DATE: {date_str}", ha="center", fontsize=16, fontweight='bold', color='red', bbox=dict(facecolor='white', edgecolor='red', pad=5))
-plt.figtext(0.5, 0.02, f"Liquidity Status: {'STABLE' if conf.item() > 0.7 else 'VOLATILE'} | Confidence: {conf.item():.1%}", ha="center", fontsize=10)
+status = 'STABLE' if conf.item() > 0.7 else 'VOLATILE'
+plt.figtext(0.5, 0.03, f"Liquidity Status: {status} | Confidence: {conf.item():.1%}", ha="center", fontsize=11, fontweight='bold')
 
-plt.tight_layout(rect=[0, 0.05, 1, 0.93])
+plt.tight_layout(rect=[0, 0.06, 1, 0.93])
 plt.show()
 
+# FIX: Added explicit print statements for the terminal
 print(f"\nANALYTICS SUMMARY:")
 print(f"Current Velocity: {current_velocity:.2f}% shift per day")
 print(f"Target Roll Date: {date_str}")
+print(f"Model Confidence: {conf.item():.1%}")
+print(f"Liquidity Prediction: {status}")
