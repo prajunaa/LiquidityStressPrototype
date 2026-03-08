@@ -7,10 +7,10 @@ from sklearn.preprocessing import StandardScaler
 import matplotlib.pyplot as plt
 import matplotlib.dates as mdates
 from datetime import datetime, timedelta
+import mplfinance as mpf
 
-# --- CONFIGURATION ---
 FND = datetime(2026, 2, 27)
-ROLL_DEADLINE = FND - timedelta(days=2) 
+ROLL_DEADLINE = FND
 ANALYSIS_DATE = datetime(2026, 2, 21) 
 TARGET_THRESHOLD = 65.0  
 
@@ -18,8 +18,7 @@ f_ticker, n_ticker = "ZCH26.CBT", "ZCK26.CBT"
 main_ticker = "ZC=F"
 
 def get_simulated_data(ticker, cutoff_date):
-    # Fix for newer yfinance multi-index behavior
-    df = yf.download(ticker, period="2y", multi_level_index=False, progress=False)
+    df = yf.download(ticker, period="2Y", multi_level_index=False, progress=False)
     if isinstance(df.columns, pd.MultiIndex):
         df.columns = df.columns.get_level_values(0)
     return df[df.index <= cutoff_date].dropna()
@@ -98,10 +97,24 @@ projections = [current_share] + [predict_logistic(t, current_share, k_final) for
 forecast_dates = [last_date] + [last_date + timedelta(days=int(t)) for t in t_range]
 
 final_target = ROLL_DEADLINE
-for d, p in zip(forecast_dates, projections):
-    if p >= TARGET_THRESHOLD:
-        final_target = min(d, ROLL_DEADLINE)
+final_target_value = TARGET_THRESHOLD
+# Find the exact intersection between forecast and threshold by interpolating
+for i in range(len(projections) - 1):
+    if projections[i] < TARGET_THRESHOLD <= projections[i + 1]:
+        # Interpolate to find exact crossing point
+        t1, p1 = forecast_dates[i], projections[i]
+        t2, p2 = forecast_dates[i + 1], projections[i + 1]
+        # Linear interpolation
+        alpha = (TARGET_THRESHOLD - p1) / (p2 - p1)
+        final_target = t1 + (t2 - t1) * alpha
+        final_target_value = TARGET_THRESHOLD
         break
+else:
+    for d, p in zip(forecast_dates, projections):
+        if p >= TARGET_THRESHOLD:
+            final_target = d
+            final_target_value = p
+            break
 
 
 print(f"--- CONNECTED AI ROLL PROJECTION ---")
@@ -112,7 +125,7 @@ fig1, ax1 = plt.subplots(figsize=(12, 6))
 ax1.plot(roll_df.index, roll_df['Share'], label='Historical May Share %', color='#1f77b4', lw=3)
 ax1.plot(forecast_dates, projections, '--', color='#d62728', label='AI Forecast', lw=2)
 ax1.axhline(TARGET_THRESHOLD, color='green', linestyle=':', alpha=0.6, label=f'Target {TARGET_THRESHOLD}%')
-ax1.scatter(final_target, TARGET_THRESHOLD, color='black', zorder=10, label='Projected Action Date')
+ax1.scatter(final_target, final_target_value, color='black', zorder=10, label='Projected Action Date')
 ax1.axvline(FND, color='black', linestyle='--', alpha=0.3, label='FND')
 ax1.set_ylim(0, 105)
 ax1.set_xlim(roll_df.index[0], forecast_dates[-1])
@@ -127,7 +140,7 @@ fig3, ax3 = plt.subplots(figsize=(12, 6))
 
 df_prices = pd.merge(df_f[['Close']], df_n[['Close']], left_index=True, right_index=True, suffixes=('_Mar', '_May'))
 df_prices['Spread'] = df_prices['Close_May'] - df_prices['Close_Mar']
-
+df_prices = df_prices[df_prices.index >= roll_df.index[0]]  # Align with share plot
 ax3.plot(df_prices.index, df_prices['Spread'], color='purple', lw=2, label='May-Mar Spread')
 ax3.fill_between(df_prices.index, 0, df_prices['Spread'], where=(df_prices['Spread'] > 0), color='red', alpha=0.2, label='Contango (Cost)')
 ax3.fill_between(df_prices.index, 0, df_prices['Spread'], where=(df_prices['Spread'] <= 0), color='green', alpha=0.3, label='Backwardation (Gain)')
@@ -151,21 +164,36 @@ months_diff = 2
 # Formula: ((Front - Next) / Front) * (12 / months_diff) * 100
 roll_yield_annual = ((last_f - last_n) / last_f) * (12 / months_diff) * 100
 
-recommendation = "STAY (HOLD)"
-reasoning = "The roll cost is manageable, and corn may be bottoming."
-
-if roll_yield_annual < -15:
-    recommendation = "ROTATE (SELL)"
-    reasoning = "High Contango is eroding your capital."
-elif state_pred == 2: 
-    recommendation = "ROTATE (CAUTION)"
-    reasoning = "AI detects high volatility stress. This often leads to wider spreads."
-
-
-print(f"\n" + "="*30)
-print(f"   STRATEGIC RECOMMENDATION")
-print(f"="*30)
-print(f"Action:      {recommendation}")
 print(f"Annual Cost: {roll_yield_annual:.2f}% (Roll Yield)")
-print(f"Reason:      {reasoning}")
-print("="*30)
+
+
+df = get_simulated_data(f_ticker, ANALYSIS_DATE)
+
+df["return"] = df["Close"].pct_change()
+df["volatility"] = df["return"].rolling(10).std()
+df["return"] = df["Close"].pct_change()
+df["vol_pct"] = df["return"].rolling(10).std() * np.sqrt(252) * 100
+df["vol_trend_fast"] = df["vol_pct"].rolling(5).mean()
+df["vol_trend_slow"] = df["vol_pct"].rolling(20).mean()
+df = df.tail(45)
+plt.figure(figsize=(16, 6))
+plt.plot(df.index, df["vol_trend_fast"], label="Short-term Vol (5d)", color="orange")
+plt.plot(df.index, df["vol_trend_slow"], label="Long-term Vol (20d)", color="blue", linestyle="--")
+plt.title(f"{f_ticker} Annualized Volatility Trends (2026)")
+plt.ylabel("Volatility (%)")
+plt.legend()
+plt.plot(df.index, df["volatility"], color="purple", linewidth=3)
+plt.title(f"{f_ticker} Rolling Volatility (10-Day Window)")
+plt.xlabel("Date")
+plt.ylabel("Volatility (%)")
+plt.grid(True, alpha=0.3)
+plt.tight_layout()
+plt.show()
+
+mpf.plot(df, 
+         type='candle',         
+         style='yahoo',         
+         title=f"{f_ticker} Candlestick Chart (2026)",
+         ylabel='Price ($)',           
+         mav=(5, 20),           # Optional: Adds 5-day and 20-day moving averages
+         figsize=(16, 8))
